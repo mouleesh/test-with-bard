@@ -1,0 +1,143 @@
+import { Bard } from "googlebard";
+import fs from "fs";
+
+const filePath = process.argv[2];
+const functionName = process.argv[3];
+
+let content = fs.readFileSync(filePath).toString();
+if(functionName){
+	content = removeCommentedLines(content);
+	content = extractFunction(content, functionName);
+} 
+
+const cookies = 'Give you coockie here';
+
+const bot = new Bard(cookies);
+
+const prompt = `
+${content}
+
+Write unit test for all functions in above code using javascript jest by importing (named) from ./${filePath.split('/').pop()} path.
+###
+`;
+
+(async function() {
+	console.log("Generating Test...");
+	let response = await bot.ask(prompt);
+
+
+	const responsePruned = response.split("```");
+	let responsePrunedJavascript;
+	for(let i = 1; i < responsePruned.length; i=+2){
+		if(responsePruned[i].startsWith('javascript')){
+			responsePrunedJavascript = responsePruned[i].slice(10);
+			break;
+		}
+	}
+
+	if(!responsePrunedJavascript){
+		console.log(response);
+		return;
+	}
+
+	responsePrunedJavascript = `
+	// Generated test starts here
+	${responsePrunedJavascript}
+	// Generated test ends here
+	`;
+
+	const filePathArray = filePath.split(".");
+	filePathArray[filePathArray.length - 1] = 'test';
+	filePathArray.push('js');
+	let testFilePath = filePathArray.join(".");
+
+	if(fileExists(testFilePath)){
+		fs.appendFile(testFilePath, responsePrunedJavascript, (err) => {
+			if (err) {
+				console.error('Error appending to file:', err);
+				return;
+			} else {
+				console.log('Generated test added successfully');
+			}
+
+		});
+	} else {
+		fs.writeFile(testFilePath, responsePrunedJavascript, (err) => {
+			if (err) {
+				console.error('Error generating Test:', err);
+			} else {
+				console.log('Test generated successfully');
+			}
+		});
+	}
+
+	
+})()
+
+
+function extractFunction(jsText, functionName) {
+	const posibleFuncSyntax = ['const', 'function', 'var', 'let']
+	let functionStart;
+
+	for (let syntax of posibleFuncSyntax){
+		functionStart = jsText.indexOf(`${syntax} ${functionName}`);
+		if(functionStart > -1){
+			break;
+		}
+	}
+
+	if (functionStart === -1) {
+		return null;
+	}
+
+	// Find the end of the function definition
+	let braceCount = 0;
+	let i = functionStart;
+	while (i < jsText.length) {
+		if (jsText[i] === '{') {
+		braceCount++;
+		} else if (jsText[i] === '}') {
+		braceCount--;
+		if (braceCount === 0) {
+			break; // End of the function definition
+		}
+		}
+		i++;
+	}
+
+	if (braceCount !== 0) {
+		// Invalid function definition
+		return null;
+	}
+
+	// Extract the function text
+	let functionText = jsText.substring(functionStart, i + 1);
+	if(functionText.startsWith("function") && functionText.indexOf("await") > -1){
+		functionText = "async " + functionText;
+	}
+	return functionText;
+}
+
+function removeCommentedLines(jsText) {
+	// Split the text into lines
+	const lines = jsText.split('\n');
+
+	// Filter out the commented lines
+	const filteredLines = lines.filter((line) => {
+		const trimmedLine = line.trim();
+		return !(trimmedLine.startsWith('//') || trimmedLine.startsWith('/*') || trimmedLine.endsWith('*/'));
+	});
+
+	// Join the lines back into a single string
+	const result = filteredLines.join('\n');
+	return result;
+}
+
+function fileExists(filePath) {
+	try {
+		fs.accessSync(filePath, fs.constants.F_OK);
+		return true;
+	} catch (err) {
+		return false;
+	}
+}
